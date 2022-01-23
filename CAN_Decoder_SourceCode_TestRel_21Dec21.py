@@ -8,21 +8,25 @@ import re
 def CAN_Decoder():
     dataFile = filedialog.askopenfilename()
     inputFrameData = []
-    
+
     # Extract frame from text file using regex approach
     typicalFrameForm = r"can(\d)\s+([(\w)]{1,3})\s+\[(\d+)\]\s+([\w]{2}(?:\s[\w]{2})*)"
-    frameSize = 0
     for dataFrame in re.findall(typicalFrameForm, open(dataFile).read()):
-        diagnosticID = int(dataFrame[1], 16)
+        messageID = int(dataFrame[1], 16)
+        dataSeg = dataFrame[3].split(" ")
+        fData = split(dataSeg[0])
+        fSize = 0
+        fType = int(fData[0], 16)
+        if fType == 0:
+            fSize = int(fData[1], 16)
+        elif fType == 1:
+            fSize = int(fData[1] + dataSeg[1], 16)
+        else:
+            print("Continuous/Flow control Frame: " + str(fType))
         data = list(map(lambda x: int(x, 16), dataFrame[3].split(" ")))
-        frameType = data[0]
-        if frameType <= 6:
-            frameSize = frameType  # Single frame
-        elif frameType == 16:  # 10 for hex notation
-            frameSize = data[1]
-        frameMap = {"DiagnosticID": diagnosticID,
-                    "FrameType": frameType,
-                    "FrameSize": frameSize,
+        frameMap = {"MessageID": messageID,
+                    "FrameType": fType,
+                    "FrameSize": fSize,
                     "PayloadData": data}
         inputFrameData.append(frameMap)
     extractedData = CAN_ReAssembly(inputFrameData)
@@ -39,67 +43,70 @@ def CAN_Decoder():
     print('Decoded file generated. Please check at input file location.')
 
 
+def split(word):
+    return [char for char in word]
+
+
 def CAN_ReAssembly(formattedRawData):
     extractedData = []
     lineCount = len(formattedRawData)
     inputData_dict = {}
     newLineCount = 0
     cFrameCount = 0
-    for dataLineIndex in range(0, lineCount):
-        dataLine = formattedRawData[dataLineIndex]
+    for dataLineIndex, dataLine in enumerate(formattedRawData):
         frameType = dataLine["FrameType"]
-        diagnosticId = dataLine["DiagnosticID"]
+        messageID = dataLine["MessageID"]
         frameSize = dataLine["FrameSize"]
-        if frameType <= 6:      # Single frame
-            sFrameIndex = 1     # Single frame index
+        if frameType == 0:  # Single frame
+            sFrameIndex = 1  # Single frame index
             payloadData = []
-            for i in range(sFrameIndex, sFrameIndex + frameSize):
-                payloadData.append(dataLine["PayloadData"][i])
-            frameMap = {"DiagnosticID": diagnosticId,
+            for pData in dataLine["PayloadData"][sFrameIndex: sFrameIndex + frameSize]:
+                payloadData.append(pData)
+            frameMap = {"MessageID": messageID,
                         "FrameType": frameType,
                         "FrameSize": frameSize,
                         "PayloadData": payloadData}
             newLineCount += 1
             inputData_dict[str(newLineCount)] = frameMap
-        elif frameType == 16:   # 10 for hex notation | Continuous frame
+        elif frameType == 1:  # Continuous frame
             frameSize = dataLine["FrameSize"]
             eleCount = 0
-            fFrameIndex = 2     # First frame index
+            fFrameIndex = 2  # First frame index
             payloadData = []
-            for j in range(fFrameIndex, len(dataLine["PayloadData"])):
-                payloadData.append(dataLine["PayloadData"][j])
+            for pData in dataLine["PayloadData"][fFrameIndex:]:
+                payloadData.append(pData)
                 eleCount += 1
             startLineIndex = dataLineIndex + 1
-            cFrameIndex = 1     # Consecutive frame index
+            cFrameIndex = 1  # Consecutive frame index
             seqCount = -1
-            startSeqNum = 33    # 21 for hex notation
+            startSeqNum = 33
             for i in range(startLineIndex, lineCount):
                 dataLine_CF = formattedRawData[i]
-                diagnosticID_CF = dataLine_CF["DiagnosticID"]
-                if diagnosticId == diagnosticID_CF:
+                messageID_CF = dataLine_CF["MessageID"]
+                if messageID == messageID_CF:
                     seqNum = dataLine_CF["PayloadData"][0]
-                    if seqNum != 16:   # 10 for hex notation
+                    if seqNum != 1:
                         seqCount += 1
                         if seqNum == startSeqNum + seqCount:
-                            for j in range(cFrameIndex, len(dataLine_CF["PayloadData"])):
+                            for pData in dataLine_CF["PayloadData"][cFrameIndex:]:
                                 if eleCount <= frameSize:
-                                    payloadData.append(dataLine_CF["PayloadData"][j])
+                                    payloadData.append(pData)
                                     eleCount += 1
                     else:
                         break
-            frameMap = {"DiagnosticID": diagnosticId,
+            frameMap = {"MessageID": messageID,
                         "FrameType": frameType,
                         "FrameSize": frameSize,
                         "PayloadData": payloadData}
             newLineCount += 1
             inputData_dict[str(newLineCount)] = frameMap
 
-        elif frameType > 32 and frameType >= 48:   # 20 & 30 for hex notation
-            cFrameCount += 1     # No action required
+        elif frameType > 2 and frameType >= 3:
+            cFrameCount += 1  # No action required
     print(str(cFrameCount) + " consecutive frames found")
 
     for key, value in inputData_dict.items():
-        newDataLine = [value["DiagnosticID"]]
+        newDataLine = [value["MessageID"]]
         for item in value["PayloadData"]:
             newDataLine.append(item)
         extractedData.append(newDataLine)
@@ -117,3 +124,4 @@ fileButton.pack(side=LEFT)
 exit_button = tk.Button(frame, text="Exit", fg="Red", command=quit)
 exit_button.pack(side=RIGHT)
 parent.mainloop()
+
